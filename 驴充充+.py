@@ -1,202 +1,220 @@
-import requests
+import os
 import time
-import random  
-from urllib.parse import urlencode
-import sys
-import base64
+import random
 import json
-import urllib.parse as urlparse
-import os 
-from Crypto.PublicKey import RSA
+import base64
+import requests
 from Crypto.Cipher import PKCS1_v1_5
+from Crypto.PublicKey import RSA
+from urllib.parse import quote
+from datetime import datetime
 
-PRIVATE_PEM = '''-----BEGIN RSA PRIVATE KEY-----
-MIICXQIBAAKBgQCS2vUGcnNMb3OxWyUn+bRpEHA+01aV2/VqCefi8h21feQT93pu
-rzsD8E7Co2Cw7Mzd/kkzy++Cib21xkF8uW6j3LKyrzVbR9MdZtEtT5IDAnjlQoOK
-eNwQdBjqcdi3gKxCdgYNNHfmQS3RjRcmz2ZgEOHBqDNY4y9EWra0UxTKXQIDAQAB
-AoGAeGzRLT5BSlbCupeRepyL0vRF9176y90Z/KCu5S3CKwhXNgBlB8ruTCaNj5LG
-QY+N2CUkBjOf7p3hUeSH4y10ifD57uW0KuQhsCrfAP84g+W/8CxccpBx6Qd6wqbL
-0tgqbYRIHmaT0H1IILVXC8o1EwpO8z9d3u5PWhfkhfsuRkkCQQDCzyaiDuhcQcPC
-xxljdCUXVTI1oCmhtbiesLT3VhRyQynPFhP/SIt0JK/IM6MpEL2AY/Iy52HVSsb5
-iOkaR/6zAkEAwPvGW7u78XZUhalmAYHRni5eubbrv9W/R9sdCM2lDCf2MveLT3zt
-jyLE5JYSy+U14iNL5foM7Wnk+GNzU8KarwJBAIaAwjrIMjRoj8Hu95+MNIPMpfMS
-l0v4jPS8KuZOv6U4rCg4JSxwKSDSp6+Bv5h932lDGJl+2jSLAaCOn+suZDMCQBTg
-qBrwemqq9IXpR6HOG5FTTugkg+ijBSiO6dsz9DEWeaoV4bpdt42Oo2JfYfUw/N1U
-GDfvD0r3889zYtyi5v0CQQCDLekGtoErSLeZ1DpXkUpbd5DoJLQ1BryIxsJVL+3K
-9aaKVlydsziJMkWan/e84eC5ON2+uDMFwV/ueqLYOJO5
------END RSA PRIVATE KEY-----'''
-PUBLIC_PEM = '''-----BEGIN PUBLIC KEY-----
+# ======================
+# 环境变量配置
+# ======================
+# 变量名: lcc
+# 格式: 手机号&用户ID&推送token（推送token可选）
+# 多账号用 @ 分割
+# 示例: 18312345678&12345678&pushplus_token@18387654321&87654321
+FINISH_TIMES_FILE = "finish_times.json"
+def init_finish_times_file():
+    today = datetime.now().strftime("%Y-%m-%d")
+    if not os.path.exists(FINISH_TIMES_FILE):
+        init_data = {"last_update": today}
+        with open(FINISH_TIMES_FILE, "w", encoding="utf-8") as f:
+            json.dump(init_data, f, ensure_ascii=False, indent=2)
+        print(f"✅ 首次运行，自动创建文件: {FINISH_TIMES_FILE}")
+        return  
+    try:
+        with open(FINISH_TIMES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)  
+        if data.get("last_update") != today:
+            reset_data = {"last_update": today}
+            with open(FINISH_TIMES_FILE, "w", encoding="utf-8") as f:
+                json.dump(reset_data, f, ensure_ascii=False, indent=2)
+            print(f"🔄 跨天检测：当前日期 {today}，已重置所有账号的广告次数记录")
+    except Exception as e:
+        init_data = {"last_update": today}
+        with open(FINISH_TIMES_FILE, "w", encoding="utf-8") as f:
+            json.dump(init_data, f, ensure_ascii=False, indent=2)
+        print(f"⚠️ 文件读取异常，重建文件：{e}")
+init_finish_times_file()
+PUBLIC_KEY = RSA.import_key(
+    """-----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCS2vUGcnNMb3OxWyUn+bRpEHA+
 01aV2/VqCefi8h21feQT93purzsD8E7Co2Cw7Mzd/kkzy++Cib21xkF8uW6j3LKy
 rzVbR9MdZtEtT5IDAnjlQoOKeNwQdBjqcdi3gKxCdgYNNHfmQS3RjRcmz2ZgEOHB
 qDNY4y9EWra0UxTKXQIDAQAB
------END PUBLIC KEY-----'''
+-----END PUBLIC KEY-----"""
+)
+cipher = PKCS1_v1_5.new(PUBLIC_KEY)
+BASE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781 NetType/WIFI MiniProgramEnv/Windows WindowsWechat",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Origin": "https://h5.lvcchong.com",
+    "Referer": "https://h5.lvcchong.com/",
+}
 
-class lcc: 
-    def __init__(self, phone, userid):
-        self.phone = phone
-        self.userid = userid
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf254162e) XWEB/18151 miniProgram/wx0132aa93a8b214ae",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://h5.lvcchong.com", 
-            "Sec-Fetch-Site": "same-site",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Dest": "empty",
-            "Referer": "https://h5.lvcchong.com/",  
-            "Accept-Language": "zh-CN,zh;q=0.9",
-        }
-    
-    def login(self):
-        url = "https://appapi.lvcchong.com/appBaseApi/h5/accessEntrance"
-        data = {
-            "phone": self.phone,
-            "ownerId": 0,
-            "userid": self.userid,
-            "time": str(int(time.time() * 1000)),
-        }
-        try:
-            response = requests.post(url, headers=self.headers, data=data, timeout=10)
-            response.raise_for_status()  # 抛出HTTP异常
-            re = response.json()
-            code = re.get("code")
-            if code == 200 and "data" in re and "userToken" in re["data"]:
-                userToken = re["data"]["userToken"]
-                msg = re["message"] if "message" in re else ""
-                print(f"token更新结果：{msg}")
-                return userToken
-            elif code == -1:
-                msg = re["message"] if "message" in re else "未知原因"
-                print(f"token更新失败：{msg}")    
-                return None
-            else:
-                print(f"登录接口返回异常，code：{code}")
-                return None
-        except Exception as e:
-            print(f"登录请求出错：{str(e)}")
-            return None
-    
-    def sign(self, userToken):
-        url = "https://appapi.lvcchong.com/appBaseApi/scoreUser/sign/userSign"
-        data = {
-            "sourceType": 3
-        }
-        self.headers["token"] = userToken
-        try:
-            response = requests.post(url, headers=self.headers, data=data, timeout=10)
-            response.raise_for_status()
-            re = response.json()
-            code = re.get("code")
-            if code == 200 and "data" in re and "score" in re["data"]:
-                score = re["data"]["score"]
-                print(f"恭喜获得{score}积分")
-            elif code == -1:
-                message = re["message"] if "message" in re else "未知错误"
-                print(f"签到失败：{message}")
-            else:
-                print(f"签到接口返回异常，code：{code}")
-        except Exception as e:
-            print(f"签到请求出错：{str(e)}")
-    
-    def ls(self, userToken):
-        url = "https://appapi.lvcchong.com/appBaseApi/scoreUser/task/getTaskList"
-        data = {
-            "sourceType": "3",
-            "version": "1"
-        }
-        self.headers["token"] = userToken
-        try:
-            response = requests.post(url, headers=self.headers, data=data, timeout=10)
-            response.raise_for_status()
-            re = response.json()
-            code = re.get("code")
-            if code == 200 and "data" in re:
-                if len(re["data"]) > 1 and "finishTimes" in re["data"][1]:
-                    finishTimes = re["data"][1]["finishTimes"]
-                    return finishTimes
-                else:
-                    return 0
-            elif code == -1:
-                message = re["message"] if "message" in re else "未知错误"
-                print(f"获取广告次数失败：{message}")
-                return 0
-            else:
-                print(f"获取广告次数接口返回异常，code：{code}")
-                return 0
-        except Exception as e:
-            print(f"获取广告次数请求出错：{str(e)}")
-            return 0
-    
-    def gg(self, userToken, task_num):
-        """
-        执行广告任务
-        :param userToken: 用户令牌
-        :param task_num: 当前执行的是第几次广告任务（用于日志输出）
-        """
-        try:
-            timestamp = str(int(time.time() * 1000))
-            pub = RSA.import_key(PUBLIC_PEM)
-            payload = {"taskType":7,"status":1,"isApp":0,"sourceType":3}
-            content_bytes = json.dumps(payload, separators=(',', ':')).encode('utf-8')
-            cipher = PKCS1_v1_5.new(pub)
-            ct_nonce = cipher.encrypt(timestamp.encode('utf-8'))
-            ct_content = cipher.encrypt(content_bytes)
-            nonce_b64 = base64.b64encode(ct_nonce).decode('ascii')
-            content_b64 = base64.b64encode(ct_content).decode('ascii')
-            nonce_url = urlparse.quote(nonce_b64)
-            content_url = urlparse.quote(content_b64)
-            
-            url = f"https://appapi.lvcchong.com/appBaseApi/scoreUser/task/receiveTaskScore?timestamp={timestamp}&nonce={nonce_url}"
-            data = {
-                "content": content_url
-            }
-            self.headers["token"] = userToken
-            response = requests.post(url, headers=self.headers, data=data, timeout=10)
-            response.raise_for_status()
-            re = response.json()
-            code = re.get("code")
-            if code == 200 and "message" in re:
-                message = re["message"]
-                print(f"第{task_num}次广告结果：{message}")
-            elif code == -1:
-                message = re["message"] if "message" in re else "未知错误"
-                print(f"第{task_num}次广告任务失败：{message}")
-            else:
-                print(f"第{task_num}次广告接口返回异常，code：{code}")
-        except Exception as e:
-            print(f"第{task_num}次广告任务请求出错：{str(e)}")
+log_messages = []
+def log(msg: str):
+    print(msg)
+    log_messages.append(msg)
 
-if __name__ == "__main__":
-    lcc_env = os.environ.get('lcc')
-    if not lcc_env:
-        print("请转人工执行，未检测到环境变量")
+def pushplus(title: str, content: str, token: str):
+    if not token:
+        print("⚠️ 未配置推送token，跳过推送")
+        return
+    
+    url = "https://www.pushplus.plus/send"
+    data = {
+        "token": token,
+        "title": title,
+        "content": content,
+        "template": "txt",
+    }
+    try:
+        r = requests.post(url, json=data, timeout=10)
+        j = r.json()
+        if j.get("code") == 200:
+            print("✅ PushPlus 推送成功")
+        else:
+            print(f"❌ PushPlus 推送失败：{j.get('msg', j)}")
+    except Exception as e:
+        print(f"❌ PushPlus 推送异常：{e}")
+def encrypt(data: str) -> str:
+    ct = cipher.encrypt(data.encode())
+    return quote(base64.b64encode(ct).decode())
+def login(phone: str, userid: str) -> str | None:
+    url = "https://appapi.lvcchong.com/appBaseApi/h5/accessEntrance"
+    data = {
+        "phone": phone,
+        "ownerId": 0,
+        "userid": userid,
+        "time": int(time.time() * 1000),
+    }
+    r = requests.post(url, headers=BASE_HEADERS, data=data, timeout=10)
+    j = r.json()
+    if j.get("code") == 200:
+        log("登录成功")
+        return j["data"]["userToken"]
+    log(f"登录失败：{j.get('message', j)}")
+    return None
+def sign(token: str):
+    r = requests.post(
+        "https://appapi.lvcchong.com/appBaseApi/scoreUser/sign/userSign",
+        headers={**BASE_HEADERS, "token": token},
+        data={"sourceType": 3},
+        timeout=10,
+    )
+    j = r.json()
+    if j.get("code") == 200:
+        log(f"签到成功，获得 {j['data']['score']} 积分")
     else:
-        lcc_list = lcc_env.split('@')
-        for num, lcc_item in enumerate(lcc_list, start=1):
-            print(f"\n=====开始执行第{num}个账号任务=====")
-            phone, userid = lcc_item.split('&')
-            client = lcc(phone, userid)
-            userToken = client.login()
-            if userToken:
-                client.sign(userToken)
-                finish_times = client.ls(userToken)
-                print(f"账号 {phone} 已完成广告次数：{finish_times}")
-                
-                if finish_times >= 10:
-                    print(f"\n❌ 账号 {phone} 广告次数已达到或超过10次，跳过执行")
-                else:
-                    loop_count = 10 - finish_times
-                    if loop_count > 0:
-                        for i in range(loop_count):
-                            task_num = i + 1
-                            print(f"\n=== 账号 {phone} 正在执行第{task_num}次广告任务 ===")
-                            client.gg(userToken, task_num)
-                            if i < loop_count - 1:
-                                delay = random.randint(20, 35)
-                                print(f"账号 {phone} 第{task_num}次广告任务完成，将延迟{delay}秒执行下一次...")
-                                time.sleep(delay)
-                        print(f"\n✅ 账号 {phone} 所有广告任务执行完毕！")
-                    else:
-                        print(f"\n❌ 账号 {phone} 无广告任务可执行")
-            else:
-                print(f"\n❌ 账号 {phone} 登录失败，无法继续执行后续操作")
+        log(f"签到失败：{j.get('message', j)}")
+def get_ad_times(token: str) -> int:
+    r = requests.post(
+        "https://appapi.lvcchong.com/appBaseApi/scoreUser/task/getTaskList",
+        headers={**BASE_HEADERS, "token": token},
+        data={"sourceType": "3", "version": "1"},
+        timeout=10,
+    )
+    j = r.json()
+    if j.get("code") == 200 and len(j["data"]) > 1:
+        return j["data"][1].get("finishTimes", 0)
+    return 0
+def do_ad(token: str, nth: int):
+    timestamp = str(int(time.time() * 1000))
+    payload = {"taskType": 7, "status": 1, "isApp": 0, "sourceType": 3}
+    content = encrypt(json.dumps(payload, separators=(",", ":")))
+    nonce = encrypt(timestamp)
+    url = f"https://appapi.lvcchong.com/appBaseApi/scoreUser/task/receiveTaskScore?timestamp={timestamp}&nonce={nonce}"
+    r = requests.post(
+        url,
+        headers={**BASE_HEADERS, "token": token},
+        data={"content": content},
+        timeout=10,
+    )
+    j = r.json()
+    log(f"第{nth}次广告 → {j.get('message', j)}")
+def read_finish_times():
+    try:
+        with open(FINISH_TIMES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {k: v for k, v in data.items() if k != "last_update"}
+    except Exception as e:
+        log(f"读取完成次数文件失败：{e}")
+        return {}
+def update_finish_times(phone: str, times: int):
+    try:
+        with open(FINISH_TIMES_FILE, "r", encoding="utf-8") as f:
+            all_data = json.load(f)
+    except:
+        all_data = {"last_update": datetime.now().strftime("%Y-%m-%d")}
+    all_data[phone] = times
+    try:
+        with open(FINISH_TIMES_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log(f"更新完成次数文件失败：{e}")
+def parse_account(item: str):
+    parts = item.strip().split("&")
+    if len(parts) < 2:
+        return None, None, None
+    phone = parts[0].strip()
+    userid = parts[1].strip()
+    push_token = parts[2].strip() if len(parts) >= 3 else None
+    return phone, userid, push_token
+def main():
+    raw = os.getenv("lcc")
+    if not raw:
+        print("=" * 50)
+        print("❌ 未设置环境变量 lcc")
+        print("=" * 50)
+        return
+    log(f"🚀 驴充充任务开始执行 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    accounts = raw.split("@")
+    push_tokens = set()
+    finish_times = read_finish_times()
+    for idx, item in enumerate(accounts, 1):
+        phone, userid, push_token = parse_account(item)  
+        if not phone or not userid:
+            log(f"❌ 账号格式错误: {item}")
+            continue
+        if push_token:
+            push_tokens.add(push_token) 
+        log(f"\n{'='*15} 第{idx}个账号 {phone} {'='*15}")
+        stored_times = finish_times.get(phone, 0)
+        if stored_times >= 10:
+            log(f"本地记录该账号已完成 {stored_times} 次广告，达到上限，跳过广告任务")
+            token = login(phone, userid)
+            if token:
+                sign(token)
+            continue
+        token = login(phone, userid)
+        if not token:
+            continue
+        sign(token)
+        done = get_ad_times(token)
+        log(f"今日已完成广告：{done} 次")
+        update_finish_times(phone, done) 
+        if done >= 10:
+            log("今日广告已满10次，跳过")
+            continue
+        need = 10 - done
+        log(f"还需 {need} 次")
+        for i in range(1, need + 1):
+            do_ad(token, i)
+            update_finish_times(phone, done + i)
+            if i < need:
+                delay = random.randint(2, 5)
+                log(f"等待 {delay}s 后继续...")
+                time.sleep(delay)
+        log(f"账号 {phone} 全部任务完成！")
+    log(f"\n{'='*15} 任务执行完毕 {'='*15}")
+    if log_messages and push_tokens:
+        for token in push_tokens:
+            pushplus("驴充充任务通知", "\n".join(log_messages), token)
+    elif not push_tokens:
+        print("⚠️ 未配置任何推送token，跳过推送")
+if __name__ == "__main__":
+    main()
